@@ -1,45 +1,48 @@
-## 如何查询最热门的查询串？
+### How to Find the Most Popular Query Strings?
 
-### 题目描述
+#### Problem Description
+A search engine logs every query string used by users, with each string being no more than 255 bytes in length.
 
-搜索引擎会通过日志文件把用户每次检索使用的所有查询串都记录下来，每个查询串的长度不超过 255 字节。
+Suppose there are currently 10 million records (with high redundancy, meaning there are no more than 3 million unique query strings out of the 10 million). The task is to find the top 10 most popular query strings, using no more than 1GB of memory. (The higher the redundancy of a query string, the more users are searching for it, making it more popular.)
 
-假设目前有 1000w 个记录（这些查询串的重复度比较高，虽然总数是 1000w，但如果除去重复后，则不超过 300w 个）。请统计最热门的 10 个查询串，要求使用的内存不能超过 1G。（一个查询串的重复度越高，说明查询它的用户越多，也就越热门。）
+#### Solution Approach
+Given that each query string can be up to 255B, the 10 million strings would require about 2.55GB of memory, making it impossible to load all strings into memory for processing.
 
-### 解答思路
+**Method 1: Divide and Conquer**
+Divide and conquer is a very practical method here.
 
-每个查询串最长为 255B，1000w 个串需要占用 约 2.55G 内存，因此，我们无法将所有字符串全部读入到内存中处理。
+- Split the data into multiple smaller files, ensuring each small file's strings can be loaded into memory for processing.
+- Find the top 10 most frequent strings in each file.
+- Use a min-heap to find the top 10 most frequent strings across all files.
 
-#### 方法一：分治法
+This method is feasible but not the best, so let's explore other methods.
 
-分治法依然是一个非常实用的方法。
+**Method 2: HashMap Method**
+Despite the large total number of strings, there are no more than 3 million unique strings. Therefore, consider storing all strings and their frequencies in a HashMap. The required space is approximately 300w*(255+4)≈777M (where 4 represents the 4 bytes occupied by an integer). Hence, 1GB of memory is sufficient.
 
-划分为多个小文件，保证单个小文件中的字符串能被直接加载到内存中处理，然后求出每个文件中出现次数最多的 10 个字符串；最后通过一个小顶堆统计出所有文件中出现最多的 10 个字符串。
+**Approach:**
 
-方法可行，但不是最好，下面介绍其他方法。
+1. Traverse the strings:
+   - If a string is not in the map, add it with a value of 1.
+   - If a string is in the map, increment its value by 1.
+   - This step has a time complexity of O(N).
 
-#### 方法二：HashMap 法
+2. Traverse the map and build a min-heap of 10 elements:
+   - If a string's frequency is higher than the root of the heap, replace the root and adjust the heap to maintain the min-heap property.
+   - After traversing, the heap contains the 10 most frequent strings.
+   - This step has a time complexity of O(Nlog10).
 
-虽然字符串总数比较多，但去重后不超过 300w，因此，可以考虑把所有字符串及出现次数保存在一个 HashMap 中，所占用的空间为 300w\*(255+4)≈777M（其中，4 表示整数占用的 4 个字节）。由此可见，1G 的内存空间完全够用。
+**Method 3: Trie Method**
+Instead of using a HashMap to count frequencies, when strings have many common prefixes, use a trie (prefix tree) to count the frequencies. Each node in the tree holds the string frequency, with 0 indicating no occurrence.
 
-**思路如下**：
+**Approach:**
 
-首先，遍历字符串，若不在 map 中，直接存入 map，value 记为 1；若在 map 中，则把对应的 value 加 1，这一步时间复杂度 `O(N)` 。
+1. Traverse the strings:
+   - Search for each string in the trie.
+   - If found, increment the node's frequency by 1.
+   - If not found, construct new nodes for the string, setting the leaf node's frequency to 1.
 
-接着遍历 map，构建一个 10 个元素的小顶堆，若遍历到的字符串的出现次数大于堆顶字符串的出现次数，则进行替换，并将堆调整为小顶堆。
+2. Use a min-heap to sort the strings by frequency.
 
-遍历结束后，堆中 10 个字符串就是出现次数最多的字符串。这一步时间复杂度 `O(Nlog10)` 。
-
-#### 方法三：前缀树法
-
-方法二使用了 HashMap 来统计次数，当这些字符串有大量相同前缀时，可以考虑使用前缀树来统计字符串出现的次数，树的结点保存字符串出现次数，0 表示没有出现。
-
-**思路如下**：
-
-在遍历字符串时，在前缀树中查找，如果找到，则把结点中保存的字符串次数加 1，否则为这个字符串构建新结点，构建完成后把叶子结点中字符串的出现次数置为 1。
-
-最后依然使用小顶堆来对字符串的出现次数进行排序。
-
-### 方法总结
-
-前缀树经常被用来统计字符串的出现次数。它的另外一个大的用途是字符串查找，判断是否有重复的字符串等。
+**Summary**
+Tries are often used to count string occurrences. They are also useful for string search and checking for duplicate strings.
