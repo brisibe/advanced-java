@@ -1,122 +1,115 @@
-## 面试题
+## Interview Questions
 
--   为什么使用消息队列？
--   消息队列有什么优点和缺点？
--   Kafka、ActiveMQ、RabbitMQ、RocketMQ 都有什么区别，以及适合哪些场景？
+-   Why use a message queue?
+-   What are the advantages and disadvantages of message queues?
+-   What are the differences between Kafka, ActiveMQ, RabbitMQ, and RocketMQ, and which scenarios are they suitable for?
 
-## 面试官心理分析
+## Interviewer’s Perspective
 
-其实面试官主要是想看看：
+The interviewer is mainly interested in:
 
--   **第一**，你知不知道你们系统里为什么要用消息队列这个东西？
+-   **First**, do you understand why your system uses a message queue?
 
-    不少候选人，说自己项目里用了 Redis、MQ，但是其实他并不知道自己为什么要用这个东西。其实说白了，就是为了用而用，或者是别人设计的架构，他从头到尾都没思考过。
+    Many candidates mention using Redis or MQ in their projects, but they don’t really know why they’re using it. Essentially, they’re using it just for the sake of using it, or because someone else designed the architecture, and they’ve never really thought about it.
 
-    没有对自己的架构问过为什么的人，一定是平时没有思考的人，面试官对这类候选人印象通常很不好。因为面试官担心你进了团队之后只会木头木脑的干呆活儿，不会自己思考。
+    Candidates who haven’t questioned their architecture are likely not thinking critically, and interviewers generally don’t have a good impression of such candidates. The concern is that once you’re in the team, you might just do things mechanically without thinking for yourself.
 
--   **第二**，你既然用了消息队列这个东西，你知不知道用了有什么好处&坏处？
+-   **Second**, since you’ve used a message queue, do you know what the pros and cons are?
 
-    你要是没考虑过这个，那你盲目弄个 MQ 进系统里，后面出了问题你是不是就自己溜了给公司留坑？你要是没考虑过引入一个技术可能存在的弊端和风险，面试官把这类候选人招进来了，基本可能就是挖坑型选手。就怕你干 1 年挖一堆坑，自己跳槽了，给公司留下无穷后患。
+    If you haven’t considered this, and you blindly introduce MQ into the system, what will happen if problems arise? Will you just leave and create a mess for the company? If you haven’t considered the potential drawbacks and risks of introducing a technology, the interviewer might worry that hiring you would be like hiring someone who digs holes that others have to fill after you leave.
 
--   **第三**，既然你用了 MQ，可能是某一种 MQ，那么你当时做没做过调研？
+-   **Third**, if you’ve used MQ, did you research which one to use?
 
-    你别傻乎乎的自己拍脑袋看个人喜好就瞎用了一个 MQ，比如 Kafka，甚至都从没调研过业界流行的 MQ 到底有哪几种。每一个 MQ 的优点和缺点是什么。每一个 MQ **没有绝对的好坏**，但是就是看用在哪个场景可以**扬长避短，利用其优势，规避其劣势**。
+    Don’t just choose an MQ based on personal preference without research, like Kafka, without ever looking into what other MQs are available. Each MQ has its strengths and weaknesses. There’s no absolutely good or bad choice; it’s all about using the right tool for the right scenario, leveraging its strengths and avoiding its weaknesses.
 
-    如果是一个不考虑技术选型的候选人招进了团队，leader 交给他一个任务，去设计个什么系统，他在里面用一些技术，可能都没考虑过选型，最后选的技术可能并不一定合适，一样是留坑。
+    If a candidate doesn’t consider technology choices carefully and is brought into the team, the leader might assign them a task to design a system, and they might use a technology that isn’t necessarily suitable, which could create problems.
 
-## 面试题剖析
+## Analysis of Interview Questions
 
-### 为什么使用消息队列
+### Why Use a Message Queue
 
-其实就是问问你消息队列都有哪些使用场景，然后你项目里具体是什么场景，说说你在这个场景里用消息队列是什么？
+This question is really about asking you to describe the scenarios where message queues are used and the specific scenario in your project. The interviewer expects you to explain a business scenario in your company, the technical challenges it posed, and how using MQ provided benefits.
 
-面试官问你这个问题，**期望的一个回答**是说，你们公司有个什么**业务场景**，这个业务场景有个什么技术挑战，如果不用 MQ 可能会很麻烦，但是你现在用了 MQ 之后带给了你很多的好处。
+Let’s start with some common scenarios where message queues are used: **decoupling**, **asynchronous processing**, and **peak shaving**.
 
-先说一下消息队列常见的使用场景吧，其实场景有很多，但是比较核心的有 3 个：**解耦**、**异步**、**削峰**。
+#### Decoupling
 
-#### 解耦
-
-看这么个场景。A 系统发送数据到 BCD 三个系统，通过接口调用发送。如果 E 系统也要这个数据呢？那如果 D 系统现在不需要了呢？A 系统负责人几乎崩溃......
+Consider this scenario: System A sends data to Systems B, C, and D via API calls. What if System E also needs this data? What if System D no longer needs it? The person in charge of System A is close to breaking down...
 
 ![mq-1](./images/mq-1.png)
 
-在这个场景中，A 系统跟其它各种乱七八糟的系统严重耦合，A 系统产生一条比较关键的数据，很多系统都需要 A 系统将这个数据发送过来。A 系统要时时刻刻考虑 BCDE 四个系统如果挂了该咋办？要不要重发，要不要把消息存起来？头发都白了啊！
+In this scenario, System A is tightly coupled with various other systems. System A generates some critical data that many systems need. System A has to constantly consider what to do if Systems B, C, D, and E go down: should it resend the data, or store the messages? It’s a huge headache!
 
-如果使用 MQ，A 系统产生一条数据，发送到 MQ 里面去，哪个系统需要数据自己去 MQ 里面消费。如果新系统需要数据，直接从 MQ 里消费即可；如果某个系统不需要这条数据了，就取消对 MQ 消息的消费即可。这样下来，A 系统压根儿不需要去考虑要给谁发送数据，不需要维护这个代码，也不需要考虑人家是否调用成功、失败超时等情况。
+By using MQ, System A sends data to MQ, and whichever system needs the data can consume it from MQ. If a new system needs the data, it can consume it directly from MQ; if a system no longer needs the data, it can stop consuming messages from MQ. This way, System A doesn’t need to worry about who to send the data to, maintaining the code, or handling scenarios where the other systems fail or time out.
 
 ![mq-2](./images/mq-2.png)
 
-**总结**：通过一个 MQ，Pub/Sub 发布订阅消息这么一个模型，A 系统就跟其它系统彻底解耦了。
+**Summary**: By using MQ and a Pub/Sub model, System A is completely decoupled from the other systems.
 
-**面试技巧**：你需要去考虑一下你负责的系统中是否有类似的场景，就是一个系统或者一个模块，调用了多个系统或者模块，互相之间的调用很复杂，维护起来很麻烦。但是其实这个调用是不需要直接同步调用接口的，如果用 MQ 给它异步化解耦，也是可以的，你就需要去考虑在你的项目里，是不是可以运用这个 MQ 去进行系统的解耦。在简历中体现出来这块东西，用 MQ 作解耦。
+**Interview Tip**: Consider whether your system has similar scenarios where a system or module interacts with multiple other systems or modules, making the interactions complex and hard to maintain. If the interaction doesn’t need to be synchronous, you could use MQ to decouple the systems. Reflect this in your resume, showing how you used MQ for decoupling.
 
-#### 异步
+#### Asynchronous Processing
 
-再来看一个场景，A 系统接收一个请求，需要在自己本地写库，还需要在 BCD 三个系统写库，自己本地写库要 3ms，BCD 三个系统分别写库要 300ms、450ms、200ms。最终请求总延时是 3 + 300 + 450 + 200 = 953ms，接近 1s，用户感觉搞个什么东西，慢死了慢死了。用户通过浏览器发起请求，等待个 1s，这几乎是不可接受的。
+Let’s look at another scenario: System A receives a request, writes to its local database, and also writes to the databases of Systems B, C, and D. Writing to the local database takes 3ms, while writing to the databases of Systems B, C, and D takes 300ms, 450ms, and 200ms, respectively. The total latency is 3 + 300 + 450 + 200 = 953ms, nearly 1 second. The user perceives this as extremely slow. Waiting for 1 second after clicking a button is almost unacceptable.
 
 ![mq-3](./images/mq-3.png)
 
-一般互联网类的企业，对于用户直接的操作，一般要求是每个请求都必须在 200 ms 以内完成，对用户几乎是无感知的。
+In internet companies, the general requirement is that every user operation should be completed within 200ms, so the user doesn’t notice any delay.
 
-如果**使用 MQ**，那么 A 系统连续发送 3 条消息到 MQ 队列中，假如耗时 5ms，A 系统从接受一个请求到返回响应给用户，总时长是 3 + 5 = 8ms，对于用户而言，其实感觉上就是点个按钮，8ms 以后就直接返回了，爽！网站做得真好，真快！
+If you **use MQ**, System A could send three messages to MQ in 5ms. From receiving the request to responding to the user, System A would take 3 + 5 = 8ms. The user would feel like the system is extremely fast.
 
 ![mq-4](./images/mq-4.png)
 
-#### 削峰
+#### Peak Shaving
 
-每天 0:00 到 12:00，A 系统风平浪静，每秒并发请求数量就 50 个。结果每次一到 12:00 ~ 13:00 ，每秒并发请求数量突然会暴增到 5k+ 条。但是系统是直接基于 MySQL 的，大量的请求涌入 MySQL，每秒钟对 MySQL 执行约 5k 条 SQL。
+From 00:00 to 12:00, System A handles about 50 concurrent requests per second. But from 12:00 to 13:00, the number of concurrent requests suddenly spikes to over 5,000 per second. Since the system is based on MySQL, a large number of requests hit the database, executing about 5,000 SQL queries per second.
 
-一般的 MySQL，扛到每秒 2k 个请求就差不多了，如果每秒请求到 5k 的话，可能就直接把 MySQL 给打死了，导致系统崩溃，用户也就没法再使用系统了。
+A typical MySQL database can handle up to 2,000 requests per second. If it suddenly handles 5,000 requests per second, it could crash, bringing the system down, and users wouldn’t be able to use it.
 
-但是高峰期一过，到了下午的时候，就成了低峰期，可能也就 1w 的用户同时在网站上操作，每秒中的请求数量可能也就 50 个请求，对整个系统几乎没有任何的压力。
+However, after the peak hour, in the afternoon, the load drops, with only about 50 requests per second, posing almost no stress on the system.
 
 ![mq-5](./images/mq-5.png)
 
-如果使用 MQ，每秒 5k 个请求写入 MQ，A 系统每秒钟最多处理 2k 个请求，因为 MySQL 每秒钟最多处理 2k 个。A 系统从 MQ 中慢慢拉取请求，每秒钟就拉取 2k 个请求，不要超过自己每秒能处理的最大请求数量就 ok，这样下来，哪怕是高峰期的时候，A 系统也绝对不会挂掉。而 MQ 每秒钟 5k 个请求进来，就 2k 个请求出去，结果就导致在中午高峰期（1 个小时），可能有几十万甚至几百万的请求积压在 MQ 中。
+By using MQ, 5,000 requests per second can be written into MQ, and System A can handle up to 2,000 requests per second, as that’s the maximum MySQL can handle. System A would slowly pull requests from MQ, processing up to 2,000 per second, ensuring the system remains stable even during peak hours. During the peak hour, millions of requests might pile up in MQ.
 
 ![mq-6](./images/mq-6.png)
 
-这个短暂的高峰期积压是 ok 的，因为高峰期过了之后，每秒钟就 50 个请求进 MQ，但是 A 系统依然会按照每秒 2k 个请求的速度在处理。所以说，只要高峰期一过，A 系统就会快速将积压的消息给解决掉。
+This temporary backlog during peak hours is fine because after the peak, System A can still process 2,000 requests per second, quickly clearing the backlog.
 
-### 消息队列有什么优缺点
+### What Are the Advantages and Disadvantages of Message Queues?
 
-优点上面已经说了，就是**在特殊场景下有其对应的好处**，**解耦**、**异步**、**削峰**。
+The advantages have been discussed: **decoupling**, **asynchronous processing**, and **peak shaving** in specific scenarios.
 
-缺点有以下几个：
+The disadvantages are as follows:
 
--   系统可用性降低
+-   **Reduced system availability**
 
-    系统引入的外部依赖越多，越容易挂掉。本来你就是 A 系统调用 BCD 三个系统的接口就好了，ABCD 四个系统还好好的，没啥问题，你偏加个 MQ 进来，万一 MQ 挂了咋整？MQ 一挂，整套系统崩溃，你不就完了？如何保证消息队列的高可用，可以[点击这里查看](/docs/high-concurrency/how-to-ensure-high-availability-of-message-queues.md)。
+    The more external dependencies you introduce, the more likely the system is to fail. Initially, System A just needed to call the APIs of Systems B, C, and D, and everything was fine. But now, you’ve introduced MQ; what happens if MQ goes down? If MQ fails, the whole system could crash.
 
--   系统复杂度提高
+-   **Increased system complexity**
 
-    硬生生加个 MQ 进来，你怎么[保证消息没有重复消费](/docs/high-concurrency/how-to-ensure-that-messages-are-not-repeatedly-consumed.md)？怎么[处理消息丢失的情况](/docs/high-concurrency/how-to-ensure-the-reliable-transmission-of-messages.md)？怎么保证消息传递的顺序性？头大头大，问题一大堆，痛苦不已。
+    By adding MQ, how do you [ensure messages aren’t consumed twice](/docs/high-concurrency/how-to-ensure-that-messages-are-not-repeatedly-consumed.md)? How do you handle [message loss](/docs/high-concurrency/how-to-ensure-the-reliable-transmission-of-messages.md)? How do you ensure the order of message delivery? There are so many problems to deal with, making it very challenging.
 
--   一致性问题
+-   **Consistency issues**
 
-    A 系统处理完了直接返回成功了，人都以为你这个请求就成功了；但是问题是，要是 BCD 三个系统那里，BD 两个系统写库成功了，结果 C 系统写库失败了，咋整？你这数据就不一致了。
+    System A might process a request and return success, but what if Systems B and D succeed, and System C fails? Your data would be inconsistent.
 
-    所以消息队列实际是一种非常复杂的架构，你引入它有很多好处，但是也得针对它带来的坏处做各种额外的技术方案和架构来规避掉，做好之后，你会发现，妈呀，系统复杂度提升了一个数量级，也许是复杂了 10 倍。但是关键时刻，用，还是得用的。
+    Message queues introduce complexity into the architecture. They offer many benefits but also require additional technical solutions to mitigate their drawbacks, making the system much more complex—perhaps ten times more complex. However, when necessary, they are indispensable.
 
-### Kafka、ActiveMQ、RabbitMQ、RocketMQ 有什么优缺点？
+### What Are the Advantages and Disadvantages of Kafka, ActiveMQ, RabbitMQ, and RocketMQ?
 
-| 特性                     | ActiveMQ                              | RabbitMQ                                           | RocketMQ                                                                                                              | Kafka                                                                                                                                           |
+| Feature                  | ActiveMQ                              | RabbitMQ                                           | RocketMQ                                                                                                              | Kafka                                                                                                                                           |
 | ------------------------ | ------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 单机吞吐量               | 万级，比 RocketMQ、Kafka 低一个数量级 | 同 ActiveMQ                                        | 10 万级，支撑高吞吐                                                                                                   | 10 万级，高吞吐，一般配合大数据类的系统来进行实时数据计算、日志采集等场景                                                                       |
-| topic 数量对吞吐量的影响 |                                       |                                                    | topic 可以达到几百/几千的级别，吞吐量会有较小幅度的下降，这是 RocketMQ 的一大优势，在同等机器下，可以支撑大量的 topic | topic 从几十到几百个时候，吞吐量会大幅度下降，在同等机器下，Kafka 尽量保证 topic 数量不要过多，如果要支撑大规模的 topic，需要增加更多的机器资源 |
-| 时效性                   | ms 级                                 | 微秒级，这是 RabbitMQ 的一大特点，延迟最低         | ms 级                                                                                                                 | 延迟在 ms 级以内                                                                                                                                |
-| 可用性                   | 高，基于主从架构实现高可用            | 同 ActiveMQ                                        | 非常高，分布式架构                                                                                                    | 非常高，分布式，一个数据多个副本，少数机器宕机，不会丢失数据，不会导致不可用                                                                    |
-| 消息可靠性               | 有较低的概率丢失数据                  | 基本不丢                                           | 经过参数优化配置，可以做到 0 丢失                                                                                     | 同 RocketMQ                                                                                                                                     |
-| 功能支持                 | MQ 领域的功能极其完备                 | 基于 erlang 开发，并发能力很强，性能极好，延时很低 | MQ 功能较为完善，还是分布式的，扩展性好                                                                               | 功能较为简单，主要支持简单的 MQ 功能，在大数据领域的实时计算以及日志采集被大规模使用                                                            |
+| Single-machine throughput | Tens of thousands, lower than RocketMQ and Kafka | Same as ActiveMQ                                    | Hundreds of thousands, supports high throughput                                                                                       | Hundreds of thousands, used for real-time data processing and log collection in big data systems                                               |
+| Impact of topic count on throughput |                                      |                                                    | Topics can reach hundreds or thousands with only a small decrease in throughput, a major advantage of RocketMQ          | Throughput drops significantly when topic count exceeds dozens to hundreds. Kafka requires more resources if many topics are needed.           |
+| Latency                  | ms-level                              | Microsecond-level, a key feature of RabbitMQ, with minimal latency | ms-level                                                                                                               | Under ms-level latency                                                                                                                            |
+| Availability             | High, achieved through a master-slave architecture | Same as ActiveMQ                                    | Very high, distributed architecture                                                                                                   | Very high, distributed, data is replicated multiple times, and a few machines going down won’t cause data loss or unavailability                |
+| Message reliability      | Low probability of data loss          | Almost no data loss                                 | Can be configured to achieve zero data loss                                                                                           | Same as RocketMQ                                                                                                                                 |
+| Feature support          | Extremely comprehensive in the MQ field | Developed in Erlang, strong concurrency, excellent performance, low latency | Fairly comprehensive MQ features, distributed, good scalability                                                              | Simple functionality, mainly supports basic MQ features, widely used in real-time computing and log collection in big data domains.             |
 
-综上，各种对比之后，有如下建议：
+Based on the table above, when selecting an MQ:
 
-一般的业务系统要引入 MQ，最早大家都用 ActiveMQ，但是现在确实大家用的不多了，没经过大规模吞吐量场景的验证，社区也不是很活跃，所以大家还是算了吧，我个人不推荐用这个了。
-
-后来大家开始用 RabbitMQ，但是确实 erlang 语言阻止了大量的 Java 工程师去深入研究和掌控它，对公司而言，几乎处于不可控的状态，但是确实人家是开源的，比较稳定的支持，活跃度也高。
-
-不过现在确实越来越多的公司会去用 RocketMQ，确实很不错，毕竟是阿里出品，但社区可能有突然黄掉的风险（目前 RocketMQ 已捐给 [Apache](https://github.com/apache/rocketmq)，但 GitHub 上的活跃度其实不算高）对自己公司技术实力有绝对自信的，推荐用 RocketMQ，否则回去老老实实用 RabbitMQ 吧，人家有活跃的开源社区，绝对不会黄。
-
-所以**中小型公司**，技术实力较为一般，技术挑战不是特别高，用 RabbitMQ 是不错的选择；**大型公司**，基础架构研发实力较强，用 RocketMQ 是很好的选择。
-
-如果是**大数据领域**的实时计算、日志采集等场景，用 Kafka 是业内标准的，绝对没问题，社区活跃度很高，绝对不会黄，何况几乎是全世界这个领域的事实性规范。
+-   If you need a high throughput MQ, consider Kafka or RocketMQ.
+-   If your MQ requires strong functionality support, including scenarios like transactions, delayed messages, and scheduling, RocketMQ is a good choice.
+-   If latency is critical, RabbitMQ should be considered.
+-   If you’re looking for an easy-to-learn, low-barrier MQ for a project that doesn’t require high throughput or a distributed nature, ActiveMQ is a good option.
