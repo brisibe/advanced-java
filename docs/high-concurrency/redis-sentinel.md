@@ -1,26 +1,27 @@
-# Redis 哨兵集群实现高可用
+# Redis Sentinel Cluster for High Availability
 
-## 哨兵的介绍
+## Introduction to Sentinel
 
-sentinel，中文名是哨兵。哨兵是 Redis 集群架构中非常重要的一个组件，主要有以下功能：
+Sentinel is a crucial component in the Redis cluster architecture, responsible for several key functions:
 
--   集群监控：负责监控 Redis master 和 slave 进程是否正常工作。
--   消息通知：如果某个 Redis 实例有故障，那么哨兵负责发送消息作为报警通知给管理员。
--   故障转移：如果 master node 挂掉了，会自动转移到 slave node 上。
--   配置中心：如果故障转移发生了，通知 client 客户端新的 master 地址。
+- **Cluster Monitoring:** Monitors whether Redis master and slave processes are functioning correctly.
+- **Message Notification:** Sends alerts to administrators if any Redis instance encounters issues.
+- **Failover:** Automatically promotes a slave to master if the master node fails.
+- **Configuration Center:** Updates clients with the new master address if a failover occurs.
 
-哨兵用于实现 Redis 集群的高可用，本身也是分布式的，作为一个哨兵集群去运行，互相协同工作。
+Sentinel ensures high availability in Redis clusters and operates in a distributed manner, with multiple Sentinel instances working together:
 
--   故障转移时，判断一个 master node 是否宕机了，需要大部分的哨兵都同意才行，涉及到了分布式选举的问题。
--   即使部分哨兵节点挂掉了，哨兵集群还是能正常工作的，因为如果一个作为高可用机制重要组成部分的故障转移系统本身是单点的，那就很坑爹了。
+- **Failover Decision:** To determine if a master node has failed, most Sentinels need to agree, involving a distributed voting mechanism.
+- **Fault Tolerance:** Even if some Sentinel nodes fail, the Sentinel cluster can still function properly. A high availability system would be unreliable if it had a single point of failure.
 
-## 哨兵的核心知识
+## Core Sentinel Knowledge
 
--   哨兵至少需要 3 个实例，来保证自己的健壮性。
--   哨兵 + Redis 主从的部署架构，是**不保证数据零丢失**的，只能保证 Redis 集群的高可用性。
--   对于哨兵 + Redis 主从这种复杂的部署架构，尽量在测试环境和生产环境，都进行充足的测试和演练。
+- **Minimum Sentinel Instances:** At least 3 Sentinel instances are required to ensure robustness.
+- **Redis Master-Slave Architecture:** The Sentinel + Redis master-slave deployment does not guarantee zero data loss but ensures high availability.
+- **Testing and Simulation:** Thorough testing and simulation in both staging and production environments are essential for complex Sentinel + Redis master-slave deployments.
 
-哨兵集群必须部署 2 个以上节点，如果哨兵集群仅仅部署了 2 个哨兵实例，quorum = 1。
+A Sentinel cluster must deploy more than 2 nodes. If only 2 Sentinel instances are deployed, the quorum is set to 1.
+
 
 ```
 +----+         +----+
@@ -29,7 +30,8 @@ sentinel，中文名是哨兵。哨兵是 Redis 集群架构中非常重要的�
 +----+         +----+
 ```
 
-配置 `quorum=1` ，如果 master 宕机， s1 和 s2 中只要有 1 个哨兵认为 master 宕机了，就可以进行切换，同时 s1 和 s2 会选举出一个哨兵来执行故障转移。但是同时这个时候，需要 majority，也就是大多数哨兵都是运行的。
+With `quorum=1`, if the master fails, failover can occur as long as at least 1 Sentinel (out of S1 and S2) detects the master failure. S1 and S2 will elect one Sentinel to perform the failover. However, a majority of Sentinels need to be operational.
+
 
 ```
 2 个哨兵，majority=2
@@ -39,9 +41,9 @@ sentinel，中文名是哨兵。哨兵是 Redis 集群架构中非常重要的�
 ...
 ```
 
-如果此时仅仅是 M1 进程宕机了，哨兵 s1 正常运行，那么故障转移是 OK 的。但是如果是整个 M1 和 S1 运行的机器宕机了，那么哨兵只有 1 个，此时就没有 majority 来允许执行故障转移，虽然另外一台机器上还有一个 R1，但是故障转移不会执行。
+If only the M1 process fails but Sentinel S1 is operational, failover is possible. However, if both M1 and S1's machine fail, with only 1 Sentinel left, there is no majority to allow failover, even though another machine has R1. Thus, failover will not occur.
 
-经典的 3 节点哨兵集群是这样的：
+A classic 3-node Sentinel cluster looks like this:
 
 ```
        +----+
@@ -55,109 +57,99 @@ sentinel，中文名是哨兵。哨兵是 Redis 集群架构中非常重要的�
 +----+         +----+
 ```
 
-配置 `quorum=2` ，如果 M1 所在机器宕机了，那么三个哨兵还剩下 2 个，S2 和 S3 可以一致认为 master 宕机了，然后选举出一个来执行故障转移，同时 3 个哨兵的 majority 是 2，所以还剩下的 2 个哨兵运行着，就可以允许执行故障转移。
+With `quorum=2`, if the machine hosting M1 fails, the remaining 2 out of 3 Sentinels (S2 and S3) can agree that the master has failed and elect one to perform the failover. The remaining 2 Sentinels are enough to allow the failover to occur.
 
-## Redis 哨兵主备切换的数据丢失问题
+## Redis Sentinel Master-Slave Switch Data Loss Issues
 
-### 导致数据丢失的两种情况
+### Causes of Data Loss
 
-主备切换的过程，可能会导致数据丢失：
+During a master-slave switch, data loss can occur due to:
 
--   异步复制导致的数据丢失
+- **Asynchronous Replication Data Loss:** Since replication from master to slave is asynchronous, some data might not be copied to the slave before the master fails. This results in data loss.
 
-因为 master->slave 的复制是异步的，所以可能有部分数据还没复制到 slave，master 就宕机了，此时这部分数据就丢失了。
+  ![async-replication-data-lose-case](./images/async-replication-data-lose-case.png)
 
-![async-replication-data-lose-case](./images/async-replication-data-lose-case.png)
+- **Split-Brain Data Loss:** Split-brain occurs when a master machine suddenly loses network connectivity with other slave machines but continues to operate. Sentinels may incorrectly assume the master has failed, leading to an election where other slaves are promoted to master. This results in two masters in the cluster (a split-brain scenario).
 
--   脑裂导致的数据丢失
+  ![Redis-cluster-split-brain](./images/redis-cluster-split-brain.png)
 
-脑裂，也就是说，某个 master 所在机器突然**脱离了正常的网络**，跟其他 slave 机器不能连接，但是实际上 master 还运行着。此时哨兵可能就会**认为** master 宕机了，然后开启选举，将其他 slave 切换成了 master。这个时候，集群里就会有两个 master ，也就是所谓的**脑裂**。
+  When the old master recovers, it becomes a slave to the new master, clearing its data and re-syncing from the new master. This leads to data loss if clients continued writing to the old master during its downtime.
 
-此时虽然某个 slave 被切换成了 master，但是可能 client 还没来得及切换到新的 master，还继续向旧 master 写数据。因此旧 master 再次恢复的时候，会被作为一个 slave 挂到新的 master 上去，自己的数据会清空，重新从新的 master 复制数据。而新的 master 并没有后来 client 写入的数据，因此，这部分数据也就丢失了。
+### Solutions to Data Loss Issues
 
-![Redis-cluster-split-brain](./images/redis-cluster-split-brain.png)
-
-### 数据丢失问题的解决方案
-
-进行如下配置：
+Configure the following settings:
 
 ```bash
 min-slaves-to-write 1
 min-slaves-max-lag 10
 ```
 
-表示，要求至少有 1 个 slave，数据复制和同步的延迟不能超过 10 秒。
+This configuration ensures that at least 1 slave must be available, and data replication and synchronization delays cannot exceed 10 seconds. If delays exceed 10 seconds, the master will stop accepting requests.
 
-如果说一旦所有的 slave，数据复制和同步的延迟都超过了 10 秒钟，那么这个时候，master 就不会再接收任何请求了。
+### Reducing Asynchronous Replication Data Loss
 
--   减少异步复制数据的丢失
+With `min-slaves-max-lag`, if a slave's data replication delay is too long, write requests are rejected, reducing data loss due to asynchronous replication.
 
-有了 `min-slaves-max-lag` 这个配置，就可以确保说，一旦 slave 复制数据和 ack 延时太长，就认为可能 master 宕机后损失的数据太多了，那么就拒绝写请求，这样可以把 master 宕机时由于部分数据未同步到 slave 导致的数据丢失降低的可控范围内。
+### Reducing Split-Brain Data Loss
 
--   减少脑裂的数据丢失
+If a master experiences split-brain, the configurations ensure that if a slave cannot receive data for over 10 seconds, client write requests are rejected, limiting data loss to at most 10 seconds.
 
-如果一个 master 出现了脑裂，跟其他 slave 丢了连接，那么上面两个配置可以确保说，如果不能继续给指定数量的 slave 发送数据，而且 slave 超过 10 秒没有给自己 ack 消息，那么就直接拒绝客户端的写请求。因此在脑裂场景下，最多就丢失 10 秒的数据。
+### sdown and odown Transition Mechanisms
 
-## sdown 和 odown 转换机制
+- **sdown (Subjective Down):** A master is considered subjective down if a single Sentinel determines it is down.
+- **odown (Objective Down):** A master is considered objective down if a quorum number of Sentinels agree it is down.
 
--   sdown 是主观宕机，就一个哨兵如果自己觉得一个 master 宕机了，那么就是主观宕机
--   odown 是客观宕机，如果 quorum 数量的哨兵都觉得一个 master 宕机了，那么就是客观宕机
+The condition for `sdown` is straightforward. If a Sentinel pings a master and does not receive a response within the `is-master-down-after-milliseconds` time, it considers the master as `sdown`. If a quorum number of other Sentinels also consider the master as `sdown` within the specified time, it is considered `odown`.
 
-sdown 达成的条件很简单，如果一个哨兵 ping 一个 master，超过了 `is-master-down-after-milliseconds` 指定的毫秒数之后，就主观认为 master 宕机了；如果一个哨兵在指定时间内，收到了 quorum 数量的其它哨兵也认为那个 master 是 sdown 的，那么就认为是 odown 了。
+### Sentinel Cluster Auto-Discovery Mechanism
 
-## 哨兵集群的自动发现机制
+Sentinels discover each other using Redis's `pub/sub` system. Each Sentinel sends a message to the `__sentinel__:hello` channel, which other Sentinels can consume to detect their presence.
 
-哨兵互相之间的发现，是通过 Redis 的 `pub/sub` 系统实现的，每个哨兵都会往 `__sentinel__:hello` 这个 channel 里发送一个消息，这时候所有其他哨兵都可以消费到这个消息，并感知到其他的哨兵的存在。
+Every 2 seconds, each Sentinel sends a message to the `__sentinel__:hello` channel of the master+slaves it monitors. This message includes its host, IP, runid, and monitoring configuration for the master.
 
-每隔两秒钟，每个哨兵都会往自己监控的某个 master+slaves 对应的 `__sentinel__:hello` channel 里**发送一个消息**，内容是自己的 host、ip 和 runid 还有对这个 master 的监控配置。
+Each Sentinel listens to the `__sentinel__:hello` channel of the master+slaves it monitors to detect other Sentinels monitoring the same master+slaves.
 
-每个哨兵也会去**监听**自己监控的每个 master+slaves 对应的 `__sentinel__:hello` channel，然后去感知到同样在监听这个 master+slaves 的其他哨兵的存在。
+Sentinels also exchange and synchronize monitoring configurations for the master.
 
-每个哨兵还会跟其他哨兵交换对 `master` 的监控配置，互相进行监控配置的同步。
+### Automatic Correction of Slave Configuration
 
-## slave 配置的自动纠正
+Sentinels automatically correct some configurations of slaves, such as ensuring a slave intended to become a master candidate replicates data from the current master. If a slave connects to an incorrect master after a failover, Sentinels ensure it connects to the correct master.
 
-哨兵会负责自动纠正 slave 的一些配置，比如 slave 如果要成为潜在的 master 候选人，哨兵会确保 slave 复制现有 master 的数据；如果 slave 连接到了一个错误的 master 上，比如故障转移之后，那么哨兵会确保它们连接到正确的 master 上。
+### Slave-to-Master Election Algorithm
 
-## slave->master 选举算法
+If a master is considered `odown`, and a majority of Sentinels allow a master-slave switch, a Sentinel will execute the switch. The election of a slave to become the new master considers:
 
-如果一个 master 被认为 odown 了，而且 majority 数量的哨兵都允许主备切换，那么某个哨兵就会执行主备切换操作，此时首先要选举一个 slave 来，会考虑 slave 的一些信息：
+- **Disconnection Duration:** The time a slave has been disconnected from the master.
+- **Slave Priority:** Lower priority values mean higher preference.
+- **Replication Offset:** More recent offsets mean higher preference.
+- **Run ID:** Lower run IDs mean higher preference if other factors are equal.
 
--   跟 master 断开连接的时长
--   slave 优先级
--   复制 offset
--   run id
+If a slave has been disconnected for more than 10 times the `down-after-milliseconds` value plus the master failure duration, it is considered unsuitable for master election.
 
-如果一个 slave 跟 master 断开连接的时间已经超过了 `down-after-milliseconds` 的 10 倍，外加 master 宕机的时长，那么 slave 就被认为不适合选举为 master。
+Slaves are then sorted based on:
 
-```
-(down-after-milliseconds * 10) + milliseconds_since_master_is_in_SDOWN_state
-```
+- **Priority:** Lower priority values are preferred.
+- **Replication Offset:** Higher offsets are preferred.
+- **Run ID:** Lower IDs are preferred if other factors are equal.
 
-接下来会对 slave 进行排序：
+### Quorum and Majority
 
--   按照 slave 优先级进行排序，slave priority 越低，优先级就越高。
--   如果 slave priority 相同，那么看 replica offset，哪个 slave 复制了越多的数据，offset 越靠后，优先级就越高。
--   如果上面两个条件都相同，那么选择一个 run id 比较小的那个 slave。
+For a Sentinel to perform a master-slave switch, a quorum number of Sentinels must agree on the `odown` status, and a majority of Sentinels must authorize the switch.
 
-## quorum 和 majority
+If `quorum < majority`, such as 5 Sentinels with a majority of 3 and a quorum of 2, then 3 Sentinels' authorization is required.
 
-每次一个哨兵要做主备切换，首先需要 quorum 数量的哨兵认为 odown，然后选举出一个哨兵来做切换，这个哨兵还需要得到 majority 哨兵的授权，才能正式执行切换。
+If `quorum >= majority`, such as 5 Sentinels with a quorum of 5, all 5 Sentinels must authorize the switch.
 
-如果 quorum < majority，比如 5 个哨兵，majority 就是 3，quorum 设置为 2，那么就 3 个哨兵授权就可以执行切换。
+### Configuration Epoch
 
-但是如果 quorum >= majority，那么必须 quorum 数量的哨兵都授权，比如 5 个哨兵，quorum 是 5，那么必须 5 个哨兵都同意授权，才能执行切换。
+Sentinels monitor a set of Redis master+slaves with corresponding configurations.
 
-## configuration epoch
+The Sentinel performing the switch obtains a configuration epoch (a version number) from the new master (slave-to-master). Each switch must have a unique version number.
 
-哨兵会对一套 Redis master+slaves 进行监控，有相应的监控的配置。
+If the initially elected Sentinel fails, other Sentinels will wait for the failover timeout period before taking over the switch, obtaining a new configuration epoch as the new version number.
 
-执行切换的那个哨兵，会从要切换到的新 master（salve->master）那里得到一个 configuration epoch，这就是一个 version 号，每次切换的 version 号都必须是唯一的。
+### Configuration Propagation
 
-如果第一个选举出的哨兵切换失败了，那么其他哨兵，会等待 failover-timeout 时间，然后接替继续执行切换，此时会重新获取一个新的 configuration epoch，作为新的 version 号。
+After a Sentinel completes a switch, it updates its local configuration with the latest master details and synchronizes this with other Sentinels via the `pub/sub` messaging mechanism.
 
-## configuration 传播
-
-哨兵完成切换之后，会在自己本地更新生成最新的 master 配置，然后同步给其他的哨兵，就是通过之前说的 `pub/sub` 消息机制。
-
-这里之前的 version 号就很重要了，因为各种消息都是通过一个 channel 去发布和监听的，所以一个哨兵完成一次新的切换之后，新的 master 配置是跟着新的 version 号的。其他的哨兵都是根据版本号的大小来更新自己的 master 配置的。
+The version number is crucial, as all messages are published and listened to on the same channel. After a switch, the new master configuration follows the new version number. Other Sentinels update their master configurations based on the version number.
