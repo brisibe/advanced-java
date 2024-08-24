@@ -1,47 +1,47 @@
-## 面试题
+## Interview Question
 
-项目中缓存是如何使用的？为什么要用缓存？缓存使用不当会造成什么后果？
+How is caching used in your project? Why use caching? What are the potential issues if caching is misused?
 
-## 面试官心理分析
+## Interviewer’s Perspective
 
-这个问题，互联网公司必问，要是一个人连缓存都不太清楚，那确实比较尴尬。
+This is a common question in tech companies. If someone isn't familiar with caching, it can be quite awkward.
 
-只要问到缓存，上来第一个问题，肯定是先问问你项目哪里用了缓存？为啥要用？不用行不行？如果用了以后可能会有什么不良的后果？
+When the topic of caching comes up, the first question is usually about where caching is used in your project. Why use it? What happens if you don’t use it? What are the possible downsides if you do use it?
 
-这就是看看你对缓存这个东西背后有没有思考，如果你就是傻乎乎的瞎用，没法给面试官一个合理的解答，那面试官对你印象肯定不太好，觉得你平时思考太少，就知道干活儿。
+This is to see if you have thought about the reasoning behind using caching. If you’re just using it blindly without being able to give a reasonable explanation, the interviewer might get the impression that you don’t think critically and just follow instructions without understanding.
 
-## 面试题剖析
+## Analysis of the Interview Question
 
-### 项目中缓存是如何使用的？
+### How is caching used in your project?
 
-这个，需要结合自己项目的业务来。
+This should be answered by referring to your project’s specific business needs.
 
-### 为什么要用缓存？
+### Why use caching?
 
-用缓存，主要有两个用途：**高性能**、**高并发**。
+Caching is mainly used for two purposes: **High Performance** and **High Concurrency**.
 
-#### 高性能
+#### High Performance
 
-假设这么个场景，你有个操作，一个请求过来，吭哧吭哧你各种乱七八糟操作 mysql，半天查出来一个结果，耗时 600ms。但是这个结果可能接下来几个小时都不会变了，或者变了也可以不用立即反馈给用户。那么此时咋办？
+Consider this scenario: you have an operation where a request comes in, and after various complex operations with MySQL, you get a result, which takes 600ms. However, this result might not change for the next few hours, or even if it does, it’s not crucial to immediately update the user. So, what should you do?
 
-缓存啊，折腾 600ms 查出来的结果，扔缓存里，一个 key 对应一个 value，下次再有人查，别走 mysql 折腾 600ms 了，直接从缓存里，通过一个 key 查出来一个 value，2ms 搞定。性能提升 300 倍。
+Cache it! The result that took 600ms to retrieve can be stored in the cache, where a key corresponds to a value. The next time someone queries it, instead of going through MySQL and taking 600ms, the cache can return the value in 2ms. This improves performance by 300 times.
 
-就是说对于一些需要复杂操作耗时查出来的结果，且确定后面不怎么变化，但是有很多读请求，那么直接将查询出来的结果放在缓存中，后面直接读缓存就好。
+So, for results that are complex to retrieve and don’t change often but are frequently requested, you can store them in the cache and read from there afterward.
 
-#### 高并发
+#### High Concurrency
 
-mysql 这么重的数据库，压根儿设计不是让你玩儿高并发的，虽然也可以玩儿，但是天然支持不好。mysql 单机支撑到 `2000QPS` 也开始容易报警了。
+MySQL, being a heavy database, is not designed for high concurrency, although it can handle it to some extent, but not natively well. A single MySQL instance might start to struggle when it reaches around `2000QPS`.
 
-所以要是你有个系统，高峰期一秒钟过来的请求有 1 万，那一个 mysql 单机绝对会死掉。你这个时候就只能上缓存，把很多数据放缓存，别放 mysql。缓存功能简单，说白了就是 `key-value` 式操作，单机支撑的并发量轻松一秒几万十几万，支撑高并发 so easy。单机承载并发量是 mysql 单机的几十倍。
+If your system experiences peak traffic of 10,000 requests per second, a single MySQL instance will definitely crash. At this point, you should use caching. Store a lot of data in the cache instead of in MySQL. The cache is simple in functionality, essentially operating as `key-value` pairs, and a single instance can easily handle tens or even hundreds of thousands of requests per second. Supporting high concurrency is easy. The concurrent capacity of a single cache instance is dozens of times that of a single MySQL instance.
 
-> 缓存是走内存的，内存天然就支撑高并发。
+> Caching operates in memory, which is naturally suited for high concurrency.
 
-### 用了缓存之后会有什么不良后果？
+### What are the potential issues after using caching?
 
-常见的缓存问题有以下几个：
+Common cache-related issues include:
 
--   [缓存与数据库双写不一致](/docs/high-concurrency/redis-consistence.md)
--   [缓存雪崩、缓存穿透、缓存击穿](/docs/high-concurrency/redis-caching-avalanche-and-caching-penetration.md)
--   [缓存并发竞争](/docs/high-concurrency/redis-cas.md)
+-   [Inconsistency between cache and database](/docs/high-concurrency/redis-consistence.md)
+-   [Cache avalanche, cache penetration, cache breakdown](/docs/high-concurrency/redis-caching-avalanche-and-caching-penetration.md)
+-   [Cache concurrency issues](/docs/high-concurrency/redis-cas.md)
 
-点击超链接，可直接查看缓存相关问题及解决方案。
+Click on the hyperlinks to directly view the related problems and solutions for caching.
