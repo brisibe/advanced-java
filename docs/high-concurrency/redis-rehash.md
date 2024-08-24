@@ -1,18 +1,19 @@
-## 面试题
+## Interview Question
 
-有了解过 Redis rehash 的过程吗？
+Do you know about the rehash process in Redis?
 
-## 面试官心理分析
+## Interviewer Psychology
 
-这个知识点算 redis 中比较低频的面试点，但是当你在介绍 HashMap 的 rehash 或者 ConcurrentHashMap 的 rehash 过程中，可以主动和面试官提及你不仅了解这些，同时还了解 Redis 中的 rehash 过程。
+This knowledge point is relatively rare in Redis interviews, but when discussing rehashing in HashMap or ConcurrentHashMap, you can proactively mention that you also understand the rehash process in Redis.
 
-Redis 是以速度快，性能好著称的，我们知道 Redis 一开始的容量是有限的，当容量不足时，需要扩容，那扩容的方式是什么？一次性全部将数据转移吗？那当数据量上千万上亿，这必定会阻塞 Redis 对命令的执行。因此就非常有必要了解一下 Redis 中的 rehash 过程。
+Redis is renowned for its speed and performance. We know that Redis starts with a limited capacity, and when capacity is insufficient, it needs to be expanded. What is the expansion method? Does it involve transferring all data at once? With data volumes reaching tens or even hundreds of millions, this would definitely block Redis from executing commands. Therefore, it is crucial to understand the rehash process in Redis.
 
-## 面试题剖析
+## Analysis of the Interview Question
 
-众所周知，Redis 主要用于存储键值对(`Key-Value Pair`)，而键值对的存储方式是由字典实现，而 Redis 中字典的底层又是通过哈希表来实现的。通过哈希表中的节点保存字典中的键值对。类似 Java 中的 HashMap，将 Key 通过哈希函数映射到哈希表节点位置。
+As we know, Redis is primarily used for storing key-value pairs, and this storage is implemented using a dictionary. Underlying this dictionary in Redis is a hash table. The nodes in the hash table store the key-value pairs of the dictionary, similar to how Java's HashMap maps keys to hash table node positions using a hash function.
 
-Redis 中字典的数据结构如下：
+The data structure of the dictionary in Redis is as follows:
+
 
 ```c
 // 字典对应的数据结构，有关hash表的结构可以参考redis源码，再次就不进行描述
@@ -25,19 +26,20 @@ typedef struct dict {
 } dict;
 ```
 
-在对哈希表进行扩展或者收缩操作时，程序需要将现有哈希表包含的所有键值对 rehash 到新哈希表里面，具体过程如下：
+When expanding or shrinking the hash table, the program needs to rehash all key-value pairs from the existing hash table into the new hash table. The specific process is as follows:
 
-### 1. 为字典的备用哈希表分配空间。
+### 1. Allocate Space for the Backup Hash Table
 
-如果执行的是扩展操作，那么备用哈希表的大小为第一个大于等于需要扩容的哈希表的键值对数量*2 的 2"(2 的 n 次方幂);【`5*2=10,`所以备用哈希表的容量为第一个大于 10 的 2"，即 16】
+- **Expansion Operation**: If performing an expansion operation, the size of the backup hash table is the next power of 2 greater than twice the number of key-value pairs in the current hash table (e.g., `5*2=10`, so the backup hash table size would be the next power of 2 greater than 10, which is 16).
 
-如果执行的是收缩操作,那么备用哈希表的大小为第一个大于等于需要扩容的哈希表的键值对数量（`ht[0] .used`）的 2"。
+- **Shrink Operation**: If performing a shrink operation, the size of the backup hash table is the next power of 2 greater than or equal to the number of key-value pairs in the current hash table (`ht[0].used`).
 
-### 2. 渐进式 rehash
+### 2. Incremental Rehash
 
-rehash 过程在数据量非常大（几千万、亿）的情况下并不是一次性地完成的，而是**渐进式地**完成的。**渐进式 rehash**的好处在于避免对服务器造成影响。
+The rehash process is not completed all at once, especially with very large data volumes (tens or hundreds of millions). Instead, it is done incrementally. The benefit of incremental rehashing is that it avoids impacting the server.
 
-渐进式 rehash 的本质：
+The essence of incremental rehashing:
 
-1. 借助 rehashidx，将 rehash 键值对所需的计算工作均摊到对字典的每个添加、删除、查找和更新操作上，从而避免了集中式 rehash 而带来的庞大计算量。
-2. 在 rehash 进行期间，每次对字典执行添加、删除、查找或者更新操作时，程序除了执行指定的操作以外，还会顺带将原哈希表在 rehashidx 索引上的所有键值对 rehash 到备用哈希表，当 rehash 工作完成之后，程序将 rehashidx 属性的值加 1。
+- Using `rehashidx`, the computational work required for rehashing key-value pairs is distributed across each add, delete, search, and update operation on the dictionary, avoiding the huge computation load of a centralized rehash.
+
+- During the rehash process, every time an operation is performed on the dictionary (add, delete, search, or update), the program not only executes the specified operation but also rehashes all key-value pairs from the original hash table at the `rehashidx` index into the backup hash table. After rehashing is complete, the program increments the value of the `rehashidx` attribute.
