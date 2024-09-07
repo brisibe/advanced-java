@@ -1,73 +1,75 @@
-## 面试题
+## Interview Question
 
-如何保证消息队列的高可用？
+How do you ensure the high availability of message queues?
 
-## 面试官心理分析
+## Interviewer's Psychological Analysis
 
-如果有人问到你 MQ 的知识，**高可用是必问的**。[上一讲](/docs/high-concurrency/why-mq.md)提到，MQ 会导致**系统可用性降低**。所以只要你用了 MQ，接下来问的一些要点肯定就是围绕着 MQ 的那些缺点怎么来解决了。
+If someone asks you about MQ (Message Queue), **high availability is definitely going to be asked**. [In a previous lesson](/docs/high-concurrency/why-mq.md), it was mentioned that MQ can **reduce system availability**. So, as long as you’re using MQ, the key points that follow are definitely going to be about how to solve the disadvantages of MQ.
 
-要是你傻乎乎的就干用了一个 MQ，各种问题从来没考虑过，那你就杯具了，面试官对你的感觉就是，只会简单使用一些技术，没任何思考，马上对你的印象就不太好了。这样的同学招进来要是做个 20k 薪资以内的普通小弟还凑合，要是做薪资 20k+ 的高工，那就惨了，让你设计个系统，里面肯定一堆坑，出了事故公司受损失，团队一起背锅。
+If you’re clueless and just use an MQ without considering various issues, you’re in trouble. The interviewer will feel that you only know how to use a technology simply, without any deep thinking. Their impression of you will worsen. If you’re applying for a regular role with a salary under 20k, maybe that’s still acceptable, but if it’s for a more senior role with a 20k+ salary, then it’s a disaster. If you're asked to design a system, it will probably have many pitfalls, and if something goes wrong, the company suffers, and the team takes the blame.
 
-## 面试题剖析
+## Analysis of the Interview Question
 
-这个问题这么问是很好的，因为不能问你 Kafka 的高可用性怎么保证？ActiveMQ 的高可用性怎么保证？一个面试官要是这么问就显得很没水平，人家可能用的就是 RabbitMQ，没用过 Kafka，你上来问人家 Kafka 干什么？这不是摆明了刁难人么。
+This question is well-phrased because you can’t ask how Kafka ensures high availability or how ActiveMQ ensures high availability. An interviewer who asks this lacks understanding because the person might be using RabbitMQ and not Kafka. Why ask about Kafka then? This would clearly make it difficult for the candidate.
 
-所以有水平的面试官，问的是 MQ 的高可用性怎么保证？这样就是你用过哪个 MQ，你就说说你对那个 MQ 的高可用性的理解。
+A good interviewer asks: "How do you ensure the high availability of an MQ?" This way, you can explain your understanding of the high availability of the specific MQ you've used.
 
-### RabbitMQ 的高可用性
+### High Availability of RabbitMQ
 
-RabbitMQ 是比较有代表性的，因为是**基于主从**（非分布式）做高可用性的，我们就以 RabbitMQ 为例子讲解第一种 MQ 的高可用性怎么实现。
+RabbitMQ is a representative example because it ensures high availability based on a **master-slave** (non-distributed) architecture. Let's take RabbitMQ as an example to explain how to ensure high availability for the first type of MQ.
 
-RabbitMQ 有三种模式：单机模式、普通集群模式、镜像集群模式。
+RabbitMQ has three modes: Single node mode, Standard Cluster mode, and Mirrored Cluster mode.
 
-#### 单机模式
+#### Single Node Mode
 
-单机模式，就是 Demo 级别的，一般就是你本地启动了玩玩儿的，没人生产用单机模式。
+Single node mode is demo-level and generally only used locally for testing. No one uses single-node mode in production.
 
-#### 普通集群模式（无高可用性）
+#### Standard Cluster Mode (No High Availability)
 
-普通集群模式，意思就是在多台机器上启动多个 RabbitMQ 实例，每台机器启动一个。你**创建的 queue，只会放在一个 RabbitMQ 实例上**，但是每个实例都同步 queue 的元数据（元数据可以认为是 queue 的一些配置信息，通过元数据，可以找到 queue 所在实例）。你消费的时候，实际上如果连接到了另外一个实例，那么那个实例会从 queue 所在实例上拉取数据过来。
+In standard cluster mode, multiple RabbitMQ instances are launched on multiple machines, with one instance per machine. The **queue you create will only be placed on one RabbitMQ instance**, but each instance synchronizes the metadata of the queue (metadata can be understood as the configuration information of the queue; through metadata, the instance of the queue can be found). When you consume messages, if you connect to another instance, that instance will pull the data from the instance where the queue is located.
 
 ![mq-7](./images/mq-7.png)
 
-这种方式确实很麻烦，也不怎么好，**没做到所谓的分布式**，就是个普通集群。因为这导致你要么消费者每次随机连接一个实例然后拉取数据，要么固定连接那个 queue 所在实例消费数据，前者有**数据拉取的开销**，后者导致**单实例性能瓶颈**。
+This method is quite cumbersome and not ideal. **It's not a distributed system**, just a standard cluster. This forces consumers to either randomly connect to an instance and pull data or consistently connect to the instance where the queue resides. The former incurs **data pull overhead**, while the latter causes a **single instance performance bottleneck**.
 
-而且如果那个放 queue 的实例宕机了，会导致接下来其他实例就无法从那个实例拉取，如果你**开启了消息持久化**，让 RabbitMQ 落地存储消息的话，**消息不一定会丢**，得等这个实例恢复了，然后才可以继续从这个 queue 拉取数据。
+Moreover, if the instance holding the queue goes down, other instances cannot pull data from it. If you have **enabled message persistence**, RabbitMQ will store the messages to disk, so **messages may not be lost**, but you will have to wait for the instance to recover before pulling data from the queue again.
 
-所以这个事儿就比较尴尬了，这就**没有什么所谓的高可用性**，**这方案主要是提高吞吐量的**，就是说让集群中多个节点来服务某个 queue 的读写操作。
+This is quite awkward as it does not provide **true high availability**. **This approach is mainly used to increase throughput**, allowing multiple nodes in the cluster to handle read and write operations for a queue.
 
-#### 镜像集群模式（高可用性）
+#### Mirrored Cluster Mode (High Availability)
 
-这种模式，才是所谓的 RabbitMQ 的高可用模式。跟普通集群模式不一样的是，在镜像集群模式下，你创建的 queue，无论是元数据还是 queue 里的消息都会**存在于多个实例上**，就是说，每个 RabbitMQ 节点都有这个 queue 的一个**完整镜像**，包含 queue 的全部数据的意思。然后每次你写消息到 queue 的时候，都会自动把**消息同步**到多个实例的 queue 上。
+This mode provides **high availability** for RabbitMQ. Unlike standard cluster mode, in mirrored cluster mode, the queue you create, including both metadata and messages, is stored across **multiple instances**. In other words, each RabbitMQ node contains a **complete mirror** of the queue, meaning all the queue’s data. Every time you write a message to the queue, it will automatically be **synchronized** to the queues on multiple instances.
 
 ![mq-8](./images/mq-8.png)
 
-那么**如何开启这个镜像集群模式**呢？其实很简单，RabbitMQ 有很好的管理控制台，就是在后台新增一个策略，这个策略是**镜像集群模式的策略**，指定的时候是可以要求数据同步到所有节点的，也可以要求同步到指定数量的节点，再次创建 queue 的时候，应用这个策略，就会自动将数据同步到其他的节点上去了。
+So, **how do you enable mirrored cluster mode**? It's quite simple. RabbitMQ has a great management console. In the backend, you can add a policy for **mirrored cluster mode**, which can either synchronize data to all nodes or to a specified number of nodes. When creating a new queue, apply this policy, and data will be automatically synchronized to other nodes.
 
-这样的话，好处在于，你任何一个机器宕机了，没事儿，其它机器（节点）还包含了这个 queue 的完整数据，别的 consumer 都可以到其它节点上去消费数据。坏处在于，第一，这个性能开销也太大了吧，消息需要同步到所有机器上，导致网络带宽压力和消耗很重！第二，这么玩儿，不是分布式的，就**没有扩展性可言**了，如果某个 queue 负载很重，你加机器，新增的机器也包含了这个 queue 的所有数据，并**没有办法线性扩展**你的 queue。你想，如果这个 queue 的数据量很大，大到这个机器上的容量无法容纳了，此时该怎么办呢？
+The advantage of this is that if one machine goes down, no problem—other machines (nodes) still have the complete data of the queue, and other consumers can continue to consume from those nodes. The downside is that, first, this method incurs a huge performance cost because messages need to be synchronized to all machines, which creates significant pressure and consumption of network bandwidth. Second, this approach is not **distributed**, meaning there is **no scalability**. If a queue has a heavy load, adding more machines won't help, as new machines will also contain all the data of the queue, and **there’s no way to scale the queue linearly**. Imagine if the queue’s data volume grows so large that the capacity of one machine is insufficient—what do you do then?
 
-### Kafka 的高可用性
+### High Availability of Kafka
 
-Kafka 一个最基本的架构认识：由多个 broker 组成，每个 broker 是一个节点；你创建一个 topic，这个 topic 可以划分为多个 partition，每个 partition 可以存在于不同的 broker 上，每个 partition 就放一部分数据。
+A basic understanding of Kafka architecture: it consists of multiple brokers, with each broker being a node. When you create a topic, it can be divided into multiple partitions, and each partition can exist on a different broker, with each partition storing part of the data.
 
-这就是**天然的分布式消息队列**，就是说一个 topic 的数据，是**分散放在多个机器上的，每个机器就放一部分数据**。
+This makes Kafka a **naturally distributed message queue**, meaning that a topic’s data is **spread across multiple machines, with each machine storing part of the data**.
 
-实际上 RabbitMQ 之类的，并不是分布式消息队列，它就是传统的消息队列，只不过提供了一些集群、HA(High Availability, 高可用性) 的机制而已，因为无论怎么玩儿，RabbitMQ 一个 queue 的数据都是放在一个节点里的，镜像集群模式下，也是每个节点都放这个 queue 的完整数据。
+In fact, RabbitMQ is not a distributed message queue; it's a traditional message queue that simply provides cluster and **High Availability (HA)** mechanisms. No matter how it's configured, all the data for a RabbitMQ queue is stored on one node, and in mirrored cluster mode, all nodes store a full copy of that queue's data.
 
-Kafka 0.8 以前，是没有 HA 机制的，就是任何一个 broker 宕机了，那个 broker 上的 partition 就废了，没法写也没法读，没有什么高可用性可言。
+Before Kafka 0.8, there was no HA mechanism. If a broker went down, the partition on that broker would become unusable, meaning you couldn’t read or write to it, so there was no high availability.
 
-比如说，我们假设创建了一个 topic，指定其 partition 数量是 3 个，分别在三台机器上。但是，如果第二台机器宕机了，会导致这个 topic 的 1/3 的数据就丢了，因此这个是做不到高可用的。
+For example, let’s assume you create a topic with 3 partitions, which are distributed across three machines. If the second machine goes down, **one-third of the data for that topic is lost**, making high availability impossible.
 
 ![kafka-before](./images/kafka-before.png)
 
-Kafka 0.8 以后，提供了 HA 机制，就是 replica（复制品） 副本机制。每个 partition 的数据都会同步到其它机器上，形成自己的多个 replica 副本。所有 replica 会选举一个 leader 出来，那么生产和消费都跟这个 leader 打交道，然后其他 replica 就是 follower。写的时候，leader 会负责把数据同步到所有 follower 上去，读的时候就直接读 leader 上的数据即可。只能读写 leader？很简单，**要是你可以随意读写每个 follower，那么就要 care 数据一致性的问题**，系统复杂度太高，很容易出问题。Kafka 会均匀地将一个 partition 的所有 replica 分布在不同的机器上，这样才可以提高容错性。
+Starting from Kafka 0.8, Kafka introduced the HA mechanism, specifically the replica (replication) feature. The data of each partition is synchronized to other machines, creating multiple replica copies. All replicas elect a leader, and both production and consumption interact with this leader, while the other replicas act as followers. When writing, the leader is responsible for synchronizing data to all followers, and when reading, you read directly from the leader. 
+
+Why only read/write from the leader? If you could freely read/write from each follower, **you would need to ensure data consistency**, which adds complexity and makes the system prone to errors. Kafka evenly distributes all the replicas of a partition across different machines, improving fault tolerance.
 
 ![kafka-after](./images/kafka-after.png)
 
-这么搞，就有所谓的**高可用性**了，因为如果某个 broker 宕机了，没事儿，那个 broker 上面的 partition 在其他机器上都有副本的。如果这个宕机的 broker 上面有某个 partition 的 leader，那么此时会从 follower 中**重新选举**一个新的 leader 出来，大家继续读写那个新的 leader 即可。这就有所谓的高可用性了。
+With this setup, **high availability** is achieved. If a broker goes down, it's fine—other machines still have replicas of the partitions from that broker. If a partition’s leader goes down, a new leader is elected from the followers, and consumers can continue to read/write from the new leader. This ensures high availability.
 
-**写数据**的时候，生产者就写 leader，然后 leader 将数据落地写本地磁盘，接着其他 follower 自己主动从 leader 来 pull 数据。一旦所有 follower 同步好数据了，就会发送 ack 给 leader，leader 收到所有 follower 的 ack 之后，就会返回写成功的消息给生产者。（当然，这只是其中一种模式，还可以适当调整这个行为）
+When **writing data**, the producer writes to the leader, which writes the data to its local disk, and the followers pull the data from the leader. Once all followers have successfully synchronized the data, they send an acknowledgment (ack) to the leader, which then sends a success message to the producer. (Of course, this is just one mode; the behavior can be adjusted.)
 
-**消费**的时候，只会从 leader 去读，但是只有当一个消息已经被所有 follower 都同步成功返回 ack 的时候，这个消息才会被消费者读到。
+When **consuming data**, you can only read from the leader. However, you can only consume messages that have been successfully acknowledged by all followers.
 
-看到这里，相信你大致明白了 Kafka 是如何保证高可用机制的了，对吧？不至于一无所知，现场还能给面试官画画图。要是遇上面试官确实是 Kafka 高手，深挖了问，那你只能说不好意思，太深入的你没研究过。
+By now, you should have a basic understanding of how Kafka ensures high availability. You should be able to explain this and even draw diagrams for the interviewer. If the interviewer is a Kafka expert and dives deep, you can simply admit that you haven’t researched those deeper aspects yet.
