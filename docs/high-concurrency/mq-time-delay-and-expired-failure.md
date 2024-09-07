@@ -1,62 +1,59 @@
-## 面试题
+## Interview Question
 
-如何解决消息队列的延时以及过期失效问题？消息队列满了以后该怎么处理？有几百万消息持续积压几小时，说说怎么解决？
+How do you resolve message queue delays and expiration issues? What should you do if the message queue is full? How would you handle millions of messages piling up for several hours?
 
-## 面试官心理分析
+## Interviewer’s Psychological Analysis
 
-你看这问法，其实本质针对的场景，都是说，可能你的消费端出了问题，不消费了；或者消费的速度极其慢。接着就坑爹了，可能你的消息队列集群的磁盘都快写满了，都没人消费，这个时候怎么办？或者是这整个就积压了几个小时，你这个时候怎么办？或者是你积压的时间太长了，导致比如 RabbitMQ 设置了消息过期时间后就没了怎么办？
+The essence of this question targets scenarios where there might be issues on the consumer side, either due to lack of consumption or extremely slow processing. The problem becomes critical if your message queue cluster’s disks are nearing full capacity with no consumption happening. What would you do if the backlog lasted for several hours or if the messages expired due to RabbitMQ’s TTL settings?
 
-所以就这事儿，其实线上挺常见的，一般不出，一出就是大 case。一般常见于，举个例子，消费端每次消费之后要写 mysql，结果 mysql 挂了，消费端 hang 那儿了，不动了；或者是消费端出了个什么岔子，导致消费速度极其慢。
+This situation is quite common in production environments and can lead to major issues. A typical example is when the consumer, which writes to MySQL after each consumption, fails, causing the consumer to hang and stop working, or if the consumer encounters issues that slow down processing.
 
-## 面试题剖析
+## Question Breakdown
 
-关于这个事儿，我们一个一个来梳理吧，先假设一个场景，我们现在消费端出故障了，然后大量消息在 mq 里积压，现在出事故了，慌了。
+Let’s break this down step-by-step. Assume a scenario where the consumer is down, and a large volume of messages is piling up in the MQ.
 
-### 大量消息在 mq 里积压了几个小时了还没解决
+### Large Backlog in MQ for Several Hours
 
-几千万条数据在 MQ 里积压了七八个小时，从下午 4 点多，积压到了晚上 11 点多。这个是我们真实遇到过的一个场景，确实是线上故障了，这个时候要不然就是修复 consumer 的问题，让它恢复消费速度，然后傻傻的等待几个小时消费完毕。这个肯定不能在面试的时候说吧。
+Imagine tens of millions of messages have been stuck in the MQ for seven to eight hours, from around 4 PM to after 11 PM. This is a real scenario we encountered, where a production issue led to such a backlog. To resolve this:
 
-一个消费者一秒是 1000 条，一秒 3 个消费者是 3000 条，一分钟就是 18 万条。所以如果你积压了几百万到上千万的数据，即使消费者恢复了，也需要大概 1 小时的时间才能恢复过来。
+1. **Fix the Consumer Issue**: Ensure the consumer is repaired and able to consume messages at an appropriate speed. Simply waiting for hours for the consumer to catch up is not ideal.
+   
+2. **Temporarily Expand Resources**:
+   - Create a new topic with 10 times the original number of partitions and queues.
+   - Develop a temporary consumer program to handle the backlog without doing time-consuming processing. Instead, it should evenly distribute messages into the temporary queues.
+   - Deploy 10 times the usual number of consumer machines to process messages from these temporary queues. This effectively increases both queue and consumer resources by 10 times, allowing data to be processed at a faster rate.
+   - Once the backlog is cleared, revert to the original architecture and consumer machines.
 
-一般这个时候，只能临时紧急扩容了，具体操作步骤和思路如下：
+### Messages Expired in MQ
 
--   先修复 consumer 的问题，确保其恢复消费速度，然后将现有 consumer 都停掉。
--   新建一个 topic，partition 是原来的 10 倍，临时建立好原先 10 倍的 queue 数量。
--   然后写一个临时的分发数据的 consumer 程序，这个程序部署上去消费积压的数据，**消费之后不做耗时的处理**，直接均匀轮询写入临时建立好的 10 倍数量的 queue。
--   接着临时征用 10 倍的机器来部署 consumer，每一批 consumer 消费一个临时 queue 的数据。这种做法相当于是临时将 queue 资源和 consumer 资源扩大 10 倍，以正常的 10 倍速度来消费数据。
--   等快速消费完积压数据之后，**得恢复原先部署的架构**，**重新**用原先的 consumer 机器来消费消息。
+Assuming you use RabbitMQ, which allows setting TTL (Time-To-Live) for messages. If messages exceed their TTL in the queue, they will be purged by RabbitMQ. This results in data loss rather than backlog.
 
-### mq 中的消息过期失效了
+In this case, since the messages are lost, you need to focus on **batch re-importation**. Here’s how:
+- After the peak period (e.g., after midnight when traffic is lower), write a program to recover lost data and reinsert it into the MQ.
+- For instance, if 10,000 orders were in the MQ and 1,000 were lost, manually write a program to retrieve those 1,000 lost orders and republish them to the MQ.
 
-假设你用的是 RabbitMQ，RabbtiMQ 是可以设置过期时间的，也就是 TTL。如果消息在 queue 中积压超过一定的时间就会被 RabbitMQ 给清理掉，这个数据就没了。那这就是第二个坑了。这就不是说数据会大量积压在 mq 里，而是**大量的数据会直接搞丢**。
+### MQ Nearly Full
 
-这个情况下，就不是说要增加 consumer 消费积压的消息，因为实际上没啥积压，而是丢了大量的消息。我们可以采取一个方案，就是**批量重导**，这个我们之前线上也有类似的场景干过。就是大量积压的时候，我们当时就直接丢弃数据了，然后等过了高峰期以后，比如大家一起喝咖啡熬夜到晚上 12 点以后，用户都睡觉了。这个时候我们就开始写程序，将丢失的那批数据，写个临时程序，一点一点的查出来，然后重新灌入 mq 里面去，把白天丢的数据给他补回来。也只能是这样了。
-
-假设 1 万个订单积压在 mq 里面，没有处理，其中 1000 个订单都丢了，你只能手动写程序把那 1000 个订单给查出来，手动发到 mq 里去再补一次。
-
-### mq 都快写满了
-
-如果消息积压在 mq 里，你很长时间都没有处理掉，此时导致 mq 都快写满了，咋办？这个还有别的办法吗？没有，谁让你第一个方案执行的太慢了，你临时写程序，接入数据来消费，**消费一个丢弃一个，都不要了**，快速消费掉所有的消息。然后走第二个方案，到了晚上再补数据吧。
+If the MQ is almost full due to a backlog, what can be done? If the initial solution is too slow, implement a temporary program to discard or quickly process messages:
+- **Consume and Discard**: Quickly consume and discard messages to free up space. Then, implement the second solution to re-import data once the system is stable.
 
 ---
 
-对于 RocketMQ，官方针对消息积压问题，提供了解决方案。
+For RocketMQ, the official solution to message backlog issues includes:
 
-### 1. 提高消费并行度
+### 1. Increase Consumption Parallelism
 
-绝大部分消息消费行为都属于 IO 密集型，即可能是操作数据库，或者调用 RPC，这类消费行为的消费速度在于后端数据库或者外系统的吞吐量，通过增加消费并行度，可以提高总的消费吞吐量，但是并行度增加到一定程度，反而会下降。所以，应用必须要设置合理的并行度。 如下有几种修改消费并行度的方法：
+Most message consumption is IO-intensive (e.g., database operations or RPC calls). To increase throughput:
+- **Increase Consumer Instances**: Add more consumer instances within the same ConsumerGroup. Ensure you don’t exceed the number of subscribed queues.
+- **Increase Threads per Consumer**: Adjust parameters like `consumeThreadMin` and `consumeThreadMax` to increase parallel threads in a single consumer.
 
-同一个 ConsumerGroup 下，通过增加 Consumer 实例数量来提高并行度（需要注意的是超过订阅队列数的 Consumer 实例无效）。可以通过加机器，或者在已有机器启动多个进程的方式。
-提高单个 Consumer 的消费并行线程，通过修改参数 consumeThreadMin、consumeThreadMax 实现。
+### 2. Batch Consumption
 
-### 2. 批量方式消费
+If the business process supports batch consumption, it can significantly improve throughput. For instance, processing 10 orders at once might take only slightly more time than processing one order, thereby increasing throughput. Set the `consumeMessageBatchMaxSize` parameter to batch messages.
 
-某些业务流程如果支持批量方式消费，则可以很大程度上提高消费吞吐量，例如订单扣款类应用，一次处理一个订单耗时 1 s，一次处理 10 个订单可能也只耗时 2 s，这样即可大幅度提高消费的吞吐量，通过设置 consumer 的 consumeMessageBatchMaxSize 返个参数，默认是 1，即一次只消费一条消息，例如设置为 N，那么每次消费的消息数小于等于 N。
+### 3. Skip Non-Essential Messages
 
-### 3. 跳过非重要消息
-
-发生消息堆积时，如果消费速度一直追不上发送速度，如果业务对数据要求不高的话，可以选择丢弃不重要的消息。例如，当某个队列的消息数堆积到 100000 条以上，则尝试丢弃部分或全部消息，这样就可以快速追上发送消息的速度。示例代码如下：
-
+If backlog exceeds consumption speed and data importance is low, consider discarding less important messages:
 ```java
 public ConsumeConcurrentlyStatus consumeMessage(
             List<MessageExt> msgs,
@@ -66,22 +63,17 @@ public ConsumeConcurrentlyStatus consumeMessage(
             msgs.get(0).getProperty(Message.PROPERTY_MAX_OFFSET);
     long diff = Long.parseLong(maxOffset) - offset;
     if (diff > 100000) {
-        // TODO 消息堆积情况的特殊处理
+        // TODO: Special handling for message backlog
         return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
     }
-    // TODO 正常消费过程
+    // TODO: Normal consumption process
     return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
 }
-```
+4. Optimize Each Message Consumption Process
+For example, a message consumption process might involve:
 
-### 4. 优化每条消息消费过程
+Querying data from the database multiple times.
+Performing complex business logic.
+Inserting results back into the database.
+If each database interaction takes 5ms, and there are 4 interactions, total time could be 20ms plus 5ms for business logic, totaling 25ms. Reducing database interactions to 2 can optimize total time to 15ms, improving performance by 40%. Using SSDs instead of SCSI disks can also reduce response time significantly.
 
-举例如下，某条消息的消费过程如下：
-
--   根据消息从 DB 查询【数据 1】
--   根据消息从 DB 查询【数据 2】
--   复杂的业务计算
--   向 DB 插入【数据 3】
--   向 DB 插入【数据 4】
-
-这条消息的消费过程中有 4 次与 DB 的 交互，如果按照每次 5ms 计算，那么总共耗时 20ms，假设业务计算耗时 5ms，那么总过耗时 25ms，所以如果能把 4 次 DB 交互优化为 2 次，那么总耗时就可以优化到 15ms，即总体性能提高了 40%。所以应用如果对时延敏感的话，可以把 DB 部署在 SSD 硬盘，相比于 SCSI 磁盘，前者的 RT 会小很多。
