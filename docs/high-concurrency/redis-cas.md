@@ -1,19 +1,25 @@
-## 面试题
+## Interview Questions
 
-Redis 的并发竞争问题是什么？如何解决这个问题？了解 Redis 事务的 CAS 方案吗？
+What are Redis concurrency issues? How can these issues be resolved? Are you familiar with Redis transactions and the CAS (Compare-And-Swap) approach?
 
-## 面试官心理分析
+## Interviewer Psychological Analysis
 
-这个也是线上非常常见的一个问题，就是**多客户端同时并发写**一个 key，可能本来应该先到的数据后到了，导致数据版本错了；或者是多客户端同时获取一个 key，修改值之后再写回去，只要顺序错了，数据就错了。
+This is a common issue in online systems: **multiple clients concurrently writing** to the same key can result in data being overwritten in the wrong order, leading to incorrect data versions. Similarly, if multiple clients retrieve a key, modify its value, and then write it back, incorrect data can result from ordering issues.
 
-而且 Redis 自己就有天然解决这个问题的 CAS 类的乐观锁方案。
+Redis provides a built-in CAS-like optimistic locking mechanism to address these issues.
 
-## 面试题剖析
+## Interview Question Analysis
 
-某个时刻，多个系统实例都去更新某个 key。可以基于 zookeeper 实现分布式锁。每个系统通过 zookeeper 获取分布式锁，确保同一时间，只能有一个系统实例在操作某个 key，别人都不允许读和写。
+When multiple system instances attempt to update the same key simultaneously, distributed locking can be used to ensure that only one instance performs the update at a time. Zookeeper is a popular tool for implementing distributed locks:
 
-![zookeeper-distributed-lock](./images/zookeeper-distributed-lock.png)
+- **Zookeeper Distributed Lock**: Each system instance obtains a distributed lock from Zookeeper to ensure that only one instance is allowed to operate on a key at any given time. Other instances are prevented from reading or writing until the lock is released.
 
-你要写入缓存的数据，都是从 mysql 里查出来的，都得写入 mysql 中，写入 mysql 中的时候必须保存一个时间戳，从 mysql 查出来的时候，时间戳也查出来。
+![Zookeeper Distributed Lock](./images/zookeeper-distributed-lock.png)
 
-每次要**写之前，先判断**一下当前这个 value 的时间戳是否比缓存里的 value 的时间戳要新。如果是的话，那么可以写，否则，就不能用旧的数据覆盖新的数据。
+To handle cache consistency:
+
+- **Write Process**: Data written to the cache must come from MySQL. When writing to MySQL, save a timestamp along with the data. When retrieving data from MySQL, also retrieve the timestamp.
+
+- **Before Writing**: **Check** if the timestamp of the data to be written is newer than the timestamp of the existing cached data. If it is, proceed with the write; otherwise, do not overwrite the existing data with outdated information.
+
+The CAS (Compare-And-Swap) approach is often used in Redis transactions to handle concurrency issues, ensuring that data is only updated if it has not been changed by another process in the meantime. This optimistic locking approach helps in maintaining data consistency in high-concurrency scenarios.
