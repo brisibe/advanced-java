@@ -1,41 +1,41 @@
-## 面试题
+## Interview Questions
 
-现在有一个未分库分表的系统，未来要分库分表，如何设计才可以让系统从未分库分表**动态切换**到分库分表上？
+For a system that is currently not sharded or partitioned but needs to be migrated to a sharded and partitioned system in the future, how would you design the migration process to allow a **dynamic switch** from a single database to sharded databases?
 
-## 面试官心理分析
+## Interviewer Psychological Analysis
 
-你看看，你现在已经明白为啥要分库分表了，你也知道常用的分库分表中间件了，你也设计好你们如何分库分表的方案了（水平拆分、垂直拆分、分表），那问题来了，你接下来该怎么把你那个单库单表的系统给迁移到分库分表上去？
+Now that you understand the reasons for database sharding and partitioning, the commonly used middleware, and how to design your sharding and partitioning strategy (horizontal and vertical partitioning, table partitioning), the next step is to consider how to migrate an existing single-database system to a sharded system.
 
-所以这都是一环扣一环的，就是看你有没有全流程经历过这个过程。
+This question is about evaluating whether you have experience with the entire migration process from a single-database to a sharded system.
 
-## 面试题剖析
+## Interview Question Analysis
 
-这个其实从 low 到高大上有好几种方案，我们都玩儿过，我都给你说一下。
+There are several ways to approach this migration, ranging from basic to more advanced strategies. Here are some common methods:
 
-### 停机迁移方案
+### Downtime Migration Strategy
 
-我先给你说一个最 low 的方案，就是很简单，大家伙儿凌晨 12 点开始运维，网站或者 app 挂个公告，说 0 点到早上 6 点进行运维，无法访问。
+A basic approach involves downtime for migration. Here's a simple method:
 
-接着到 0 点停机，系统停掉，没有流量写入了，此时老的单库单表数据库静止了。然后你之前得写好一个**导数的一次性工具**，此时直接跑起来，然后将单库单表的数据哗哗哗读出来，写到分库分表里面去。
+1. Announce the maintenance window in advance, such as from midnight to 6 AM.
+2. At midnight, stop the system to halt all traffic and data writes. The old single-database system will be static during this period.
+3. Use a pre-written **data migration tool** to read data from the old database and write it to the new sharded database.
+4. After migration, update the system's database connection configuration, including any necessary changes to the code and SQL queries.
+5. Restart the system with the new configuration and verify that everything works as expected.
 
-导数完了之后，就 ok 了，修改系统的数据库连接配置啥的，包括可能代码和 SQL 也许有修改，那你就用最新的代码，然后直接启动连到新的分库分表上去。
-
-验证一下，ok 了，完美，大家伸个懒腰，看看看凌晨 4 点钟的北京夜景，打个滴滴回家吧。
-
-但是这个方案比较 low，谁都能干，我们来看看高大上一点的方案。
+This method is straightforward but involves downtime, which might not be acceptable for many systems.
 
 ![database-shard-method-1](./images/database-shard-method-1.png)
 
-### 双写迁移方案
+### Dual-Write Migration Strategy
 
-这个是我们常用的一种迁移方案，比较靠谱一些，不用停机，不用看北京凌晨 4 点的风景。
+A more advanced and commonly used method involves no downtime. Here's how it works:
 
-简单来说，就是在线上系统里面，之前所有写库的地方，增删改操作，**除了对老库增删改，都加上对新库的增删改**，这就是所谓的**双写**，同时写俩库，老库和新库。
+1. **Dual Writing**: Modify all write operations in the system to update both the old and the new databases. This means that every insert, update, and delete operation will be executed on both the old and new databases simultaneously.
 
-然后**系统部署**之后，新库数据差太远，用之前说的导数工具，跑起来读老库数据写新库，写的时候要根据 gmt_modified 这类字段判断这条数据最后修改的时间，除非是读出来的数据在新库里没有，或者是比新库的数据新才会写。简单来说，就是不允许用老数据覆盖新数据。
+2. **Initial Data Migration**: Use a data migration tool to read data from the old database and write it to the new database. During this process, ensure that data is only written to the new database if it is newer or if it is missing from the new database. This prevents older data from overwriting newer data.
 
-导完一轮之后，有可能数据还是存在不一致，那么就程序自动做一轮校验，比对新老库每个表的每条数据，接着如果有不一样的，就针对那些不一样的，从老库读数据再次写。反复循环，直到两个库每个表的数据都完全一致为止。
+3. **Data Consistency Check**: After the initial migration, there may be data inconsistencies. Implement an automatic verification process to compare data between the old and new databases. For any discrepancies, re-read data from the old database and update the new database. Continue this process until all data is consistent.
 
-接着当数据完全一致了，就 ok 了，基于仅仅使用分库分表的最新代码，重新部署一次，不就仅仅基于分库分表在操作了么，还没有几个小时的停机时间，很稳。所以现在基本玩儿数据迁移之类的，都是这么干的。
+4. **Final Switch**: Once data consistency is confirmed, redeploy the system using only the new sharded database configuration. This approach ensures minimal downtime, often just a few hours, and is reliable for maintaining data integrity.
 
 ![database-shard-method-2](./images/database-shard-method-2.png)
