@@ -1,103 +1,94 @@
-# Redis 主从架构
+# Redis Master-Slave Architecture
 
-单机的 Redis，能够承载的 QPS 大概就在上万到几万不等。对于缓存来说，一般都是用来支撑**读高并发**的。因此架构做成主从(master-slave)架构，一主多从，主负责写，并且将数据复制到其它的 slave 节点，从节点负责读。所有的**读请求全部走从节点**。这样也可以很轻松实现水平扩容，**支撑读高并发**。
+A single Redis instance can handle approximately tens of thousands to hundreds of thousands of QPS. For caching purposes, it is typically used to support **high read concurrency**. Therefore, the architecture is designed as a master-slave (master-slave) setup, with one master and multiple slaves. The master handles writes and replicates data to other slave nodes, while slave nodes handle reads. All **read requests go to slave nodes**. This also facilitates horizontal scaling and **supports high read concurrency**.
 
 ![Redis-master-slave](./images/redis-master-slave.png)
 
-Redis replication -> 主从架构 -> 读写分离 -> 水平扩容支撑读高并发
+Redis replication -> Master-Slave Architecture -> Read-Write Separation -> Horizontal Scaling for High Read Concurrency
 
-## Redis replication 的核心机制
+## Core Mechanism of Redis Replication
 
--   Redis 采用**异步方式**复制数据到 slave 节点，不过 Redis2.8 开始，slave node 会周期性地确认自己每次复制的数据量；
--   一个 master node 是可以配置多个 slave node 的；
--   slave node 也可以连接其他的 slave node；
--   slave node 做复制的时候，不会 block master node 的正常工作；
--   slave node 在做复制的时候，也不会 block 对自己的查询操作，它会用旧的数据集来提供服务；但是复制完成的时候，需要删除旧数据集，加载新数据集，这个时候就会暂停对外服务了；
--   slave node 主要用来进行横向扩容，做读写分离，扩容的 slave node 可以提高读的吞吐量。
+- Redis uses **asynchronous** replication to copy data to slave nodes. Starting from Redis 2.8, slave nodes periodically confirm the amount of data they have copied.
+- A single master node can be configured with multiple slave nodes.
+- Slave nodes can also connect to other slave nodes.
+- Replication from the slave node does not block the master node’s normal operations.
+- While replicating, a slave node does not block its own queries. It uses an old dataset to serve requests. However, once replication is complete, the old dataset is removed and the new dataset is loaded, which causes a temporary suspension of services.
+- Slave nodes are mainly used for horizontal scaling and read-write separation. Adding more slave nodes can improve read throughput.
 
-注意，如果采用了主从架构，那么建议必须**开启** master node 的[持久化](/docs/high-concurrency/redis-persistence.md)，不建议用 slave node 作为 master node 的数据热备，因为那样的话，如果你关掉 master 的持久化，可能在 master 宕机重启的时候数据是空的，然后可能一经过复制， slave node 的数据也丢了。
+Note: If using a master-slave architecture, it is essential to **enable** persistence on the master node, as outlined in the [Redis Persistence Documentation](/docs/high-concurrency/redis-persistence.md). Using a slave node as a hot backup for the master node is not recommended, as data may be lost if the master’s persistence is turned off. In the event of a master failure and restart, the data could be empty, and replication might result in lost data on the slave nodes.
 
-另外，master 的各种备份方案，也需要做。万一本地的所有文件丢失了，从备份中挑选一份 rdb 去恢复 master，这样才能**确保启动的时候，是有数据的**，即使采用了后续讲解的[高可用机制](/docs/high-concurrency/redis-sentinel.md)，slave node 可以自动接管 master node，但也可能 sentinel 还没检测到 master failure，master node 就自动重启了，还是可能导致上面所有的 slave node 数据被清空。
+Additionally, various backup solutions for the master node should be implemented. If all local files are lost, recover the master from a backup RDB file to **ensure data availability** upon startup. Even if using [Redis Sentinel for High Availability](/docs/high-concurrency/redis-sentinel.md), the system might not detect the master failure in time, which could lead to clearing of data on all slave nodes if the master node restarts automatically.
 
-## Redis 主从复制的核心原理
+## Core Principles of Redis Master-Slave Replication
 
-当启动一个 slave node 的时候，它会发送一个 `PSYNC` 命令给 master node。
+When a slave node starts, it sends a `PSYNC` command to the master node.
 
-如果这是 slave node 初次连接到 master node，那么会触发一次 `full resynchronization` 全量复制。此时 master 会启动一个后台线程，开始生成一份 `RDB` 快照文件，同时还会将从客户端 client 新收到的所有写命令缓存在内存中。 `RDB` 文件生成完毕后， master 会将这个 `RDB` 发送给 slave，slave 会先**写入本地磁盘，然后再从本地磁盘加载到内存**中，接着 master 会将内存中缓存的写命令发送到 slave，slave 也会同步这些数据。slave node 如果跟 master node 有网络故障，断开了连接，会自动重连，连接之后 master node 仅会复制给 slave 部分缺少的数据。
+If this is the first time the slave node connects to the master, a `full resynchronization` (full replication) is triggered. At this point, the master starts a background thread to generate an `RDB` snapshot file and caches all newly received write commands in memory. After the `RDB` file is generated, the master sends it to the slave, which writes it to local disk and then loads it into memory. The master then sends the cached write commands to the slave, which synchronizes this data. If there is a network failure between the slave and master, the slave will automatically reconnect, and the master will only replicate the missing data.
 
 ![Redis-master-slave-replication](./images/redis-master-slave-replication.png)
 
-### 主从复制的断点续传
+### Point-in-Time Resumption for Replication
 
-从 Redis2.8 开始，就支持主从复制的断点续传，如果主从复制过程中，网络连接断掉了，那么可以接着上次复制的地方，继续复制下去，而不是从头开始复制一份。
+Starting with Redis 2.8, point-in-time resumption is supported for master-slave replication. If the network connection is lost during replication, it resumes from the last replicated offset rather than starting from scratch.
 
-master node 会在内存中维护一个 backlog，master 和 slave 都会保存一个 replica offset 还有一个 master run id，offset 就是保存在 backlog 中的。如果 master 和 slave 网络连接断掉了，slave 会让 master 从上次 replica offset 开始继续复制，如果没有找到对应的 offset，那么就会执行一次 `resynchronization` 。
+The master node maintains a backlog in memory, and both the master and slave store a replica offset and master run ID. The offset is saved in the backlog. If the network connection is lost, the slave will request the master to continue replication from the last replica offset. If the offset is not found, a `resynchronization` is performed.
 
-> 如果根据 host+ip 定位 master node，是不靠谱的，如果 master node 重启或者数据出现了变化，那么 slave node 应该根据不同的 run id 区分。
+> Identifying the master node based on host+IP is unreliable. If the master node restarts or data changes, the slave should differentiate based on different run IDs.
 
-### 无磁盘化复制
+### Diskless Replication
 
-master 在内存中直接创建 `RDB` ，然后发送给 slave，不会在自己本地落地磁盘了。只需要在配置文件中开启 `repl-diskless-sync yes` 即可。
+The master creates the `RDB` in memory and sends it to the slave without writing it to disk. Enable this feature in the configuration file with `repl-diskless-sync yes`.
 
 ```bash
 repl-diskless-sync yes
 
-# 等待 5s 后再开始复制，因为要等更多 slave 重新连接过来
-repl-diskless-sync-delay 5
 ```
 
-### 过期 key 处理
+# Wait 5 seconds before starting replication to allow more slaves to reconnect
+repl-diskless-sync-delay 5
+Expired Key Handling
+Slaves do not handle key expiration; they wait for the master to handle expired keys. If the master expires a key or uses LRU to evict a key, it simulates a del command and sends it to the slaves.
 
-slave 不会过期 key，只会等待 master 过期 key。如果 master 过期了一个 key，或者通过 LRU 淘汰了一个 key，那么会模拟一条 del 命令发送给 slave。
+### Complete Replication Process
+When a slave node starts, it saves the master node’s information, including host and IP, but the replication process has not yet begun.
 
-## 复制的完整流程
+The slave node has a scheduled task that checks every second for new master nodes to connect and replicate. If found, it establishes a socket connection with the master node and sends a ping command. If the master requires authentication (via requirepass), the slave must send the masterauth password. The master node performs the initial full replication, sending all data to the slave node. Subsequent write commands are asynchronously replicated to the slave.
 
-slave node 启动时，会在自己本地保存 master node 的信息，包括 master node 的 `host` 和 `ip` ，但是复制流程没开始。
 
-slave node 内部有个定时任务，每秒检查是否有新的 master node 要连接和复制，如果发现，就跟 master node 建立 socket 网络连接。然后 slave node 发送 `ping` 命令给 master node。如果 master 设置了 requirepass，那么 slave node 必须发送 masterauth 的口令过去进行认证。master node **第一次执行全量复制**，将所有数据发给 slave node。而在后续，master node 持续将写命令，异步复制给 slave node。
 
-![Redis-master-slave-replication-detail](./images/redis-master-slave-replication-detail.png)
-
-### 全量复制
-
--   master 执行 bgsave ，在本地生成一份 rdb 快照文件。
--   master node 将 rdb 快照文件发送给 slave node，如果 rdb 复制时间超过 60 秒（repl-timeout），那么 slave node 就会认为复制失败，可以适当调大这个参数(对于千兆网卡的机器，一般每秒传输 100MB，6G 文件，很可能超过 60s)
--   master node 在生成 rdb 时，会将所有新的写命令缓存在内存中，在 slave node 保存了 rdb 之后，再将新的写命令复制给 slave node。
--   如果在复制期间，内存缓冲区持续消耗超过 64MB，或者一次性超过 256MB，那么停止复制，复制失败。
-
-```bash
+Full Replication
+The master executes bgsave to generate an RDB snapshot file.
+The master sends the RDB snapshot file to the slave. If the RDB transfer exceeds 60 seconds (repl-timeout), the slave considers replication failed. This parameter can be adjusted (e.g., for 1 Gbps network cards, 100MB per second transfer, a 6GB file may exceed 60 seconds).
+During RDB generation, the master caches all new write commands in memory. After the slave saves the RDB, the master sends the new write commands to the slave.
+If memory buffer consumption exceeds 64MB or 256MB in a single instance during replication, replication is stopped, and it fails.
+``` bash
+Copy code
 client-output-buffer-limit slave 256MB 64MB 60
 ```
+After receiving the RDB, the slave clears its old data and loads the new RDB into memory. Note that the slave will continue to serve requests based on the old dataset until the old data is cleared.
+If AOF is enabled on the slave, it immediately performs BGREWRITEAOF to rewrite the AOF.
+### Incremental Replication
+If the network connection is lost during full replication, incremental replication is triggered when the slave reconnects to the master.
+The master retrieves the missing data from its backlog and sends it to the slave. By default, the backlog is 1MB.
+The master retrieves data from the backlog based on the offset sent by the slave in the psync command.
+Heartbeat
+Master and slave nodes exchange heartbeat information.
 
--   slave node 接收到 rdb 之后，清空自己的旧数据，然后重新加载 rdb 到自己的内存中。注意，在清空旧数据之前，slave node 依然会**基于旧的数据版本**对外提供服务。
--   如果 slave node 开启了 AOF，那么会立即执行 BGREWRITEAOF，重写 AOF。
+The master sends a heartbeat every 10 seconds, and the slave sends a heartbeat every second.
 
-### 增量复制
+### Asynchronous Replication
+The master writes data internally upon receiving write commands and asynchronously sends it to the slave.
 
--   如果全量复制过程中，master-slave 网络连接断掉，那么 slave 重新连接 master 时，会触发增量复制。
--   master 直接从自己的 backlog 中获取部分丢失的数据，发送给 slave node，默认 backlog 就是 1MB。
--   master 就是根据 slave 发送的 psync 中的 offset 来从 backlog 中获取数据的。
+### How Redis Achieves High Availability
+If the system can provide 99.99% availability over 365 days, it is considered highly available.
 
-### heartbeat
+If a slave fails, it does not affect availability, as other slaves continue to provide the same data and service.
 
-主从节点互相都会发送 heartbeat 信息。
+However, if the master node fails, writing data becomes impossible, and write caches become invalid. The slave nodes become ineffective as they no longer receive data from the master, rendering the system unusable.
 
-master 默认每隔 10 秒发送一次 heartbeat，slave node 每隔 1 秒发送一个 heartbeat。
+Redis achieves high availability through failover fault tolerance, also known as master-slave switching.
 
-### 异步复制
+When the master node fails, it automatically detects the failure and promotes a slave node to master. This process ensures high availability in Redis's master-slave architecture.
 
-master 每次接收到写命令之后，先在内部写入数据，然后异步发送给 slave node。
+Redis's high availability using Sentinel will be discussed in detail later.
 
-## Redis 如何才能做到高可用
-
-如果系统在 365 天内，有 99.99% 的时间，都是可以哗哗对外提供服务的，那么就说系统是高可用的。
-
-一个 slave 挂掉了，是不会影响可用性的，还有其它的 slave 在提供相同数据下的相同的对外的查询服务。
-
-但是，如果 master node 死掉了，会怎么样？没法写数据了，写缓存的时候，全部失效了。slave node 还有什么用呢，没有 master 给它们复制数据了，系统相当于不可用了。
-
-Redis 的高可用架构，叫做 `failover` **故障转移**，也可以叫做主备切换。
-
-master node 在故障时，自动检测，并且将某个 slave node 自动切换为 master node 的过程，叫做主备切换。这个过程，实现了 Redis 的主从架构下的高可用。
-
-后面会详细说明 Redis [基于哨兵的高可用性](/docs/high-concurrency/redis-sentinel.md)。
